@@ -54,7 +54,7 @@ Graphify-GDScript delivers a complete 4-tier solution:
    - Slash command skill ready for Antigravity, Cursor, Claude Code, and Windsurf.
    - Constrains context answers strictly to a token budget (e.g. `--budget 1500`).
 4. **Model Context Protocol (MCP) Server**:
-   - Stdio MCP server exposing tools: `gdscript_query_graph`, `gdscript_token_reduction_report`, `gdscript_trace_signal`, `gdscript_get_autoloads`, `gdscript_get_god_nodes`.
+   - Stdio MCP server exposing tools: `gdscript_query_graph`, `gdscript_token_reduction_report`, `gdscript_trace_signal`, `gdscript_get_autoloads`, `gdscript_get_god_nodes`, `gdscript_rebuild_graph`.
 
 ---
 
@@ -102,6 +102,23 @@ graphify-gdscript token-report .
 ```bash
 graphify-gdscript mcp .
 ```
+
+Register it with an **absolute** project path (IDEs may launch servers from a different working directory):
+```bash
+claude mcp add graphify-gdscript -- graphify-gdscript mcp /path/to/my_godot_project
+```
+Or in an `mcp.json` / `.mcp.json`:
+```json
+{
+  "mcpServers": {
+    "graphify-gdscript": {
+      "command": "graphify-gdscript",
+      "args": ["mcp", "/path/to/my_godot_project"]
+    }
+  }
+}
+```
+The graph is built in the background right after the client connects. Call `gdscript_rebuild_graph` after editing project files to refresh it.
 
 ### Hook into Upstream `graphifyy`
 ```bash

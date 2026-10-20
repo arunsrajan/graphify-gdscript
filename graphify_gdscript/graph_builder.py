@@ -6,6 +6,7 @@ and resolves cross-file references, autoloads, signal connections, and scene hie
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 import networkx as nx
@@ -14,6 +15,14 @@ from graphify_gdscript.extractors.gdscript import extract_gdscript, make_id, nor
 from graphify_gdscript.extractors.tscn import extract_tscn
 from graphify_gdscript.extractors.project_godot import extract_project_godot
 from graphify_gdscript.extractors.tres import extract_tres
+
+# Directories that never contain project sources but can be huge.
+IGNORED_DIRS = {"graphify-out", "build", "node_modules", "__pycache__", "venv", "env"}
+
+
+def _is_reference_kind(kind: str) -> bool:
+    """Placeholder nodes created where a symbol is *used* rather than defined."""
+    return kind.endswith("_ref") or kind == "external_call"
 
 
 class GodotGraphBuilder:
@@ -49,7 +58,13 @@ class GodotGraphBuilder:
 
         for root, dirs, filenames in os.walk(self.project_path):
             # Ignore hidden or build dirs
-            dirs[:] = [d for d in dirs if not d.startswith(".") and d not in ("graphify-out", ".godot", "build")]
+            dirs[:] = [d for d in dirs if not d.startswith(".") and d not in IGNORED_DIRS]
+            if Path(root).name == "addons" and "graphify_gdscript" in dirs:
+                dirs.remove("graphify_gdscript")  # our own editor plugin is not game code
+            if proj_file.exists() and root != str(self.project_path) and "project.godot" in filenames:
+                # A nested, separate Godot project - not part of this one.
+                dirs[:] = []
+                continue
             for f in filenames:
                 p = Path(root) / f
                 ext = p.suffix.lower()
@@ -68,7 +83,7 @@ class GodotGraphBuilder:
 
         # 1. Extract project.godot first for autoloads and main scene
         for pf in file_map["project"]:
-            res = extract_project_godot(pf, root=self.project_path)
+            res = self._safe_extract(extract_project_godot, pf)
             self._merge_extraction(res)
             for auto_name, auto_path in res.get("autoloads", {}).items():
                 self.autoloads[auto_name] = {
@@ -78,7 +93,7 @@ class GodotGraphBuilder:
 
         # 2. Extract all GDScript files
         for gdf in file_map["gdscript"]:
-            res = extract_gdscript(gdf, root=self.project_path)
+            res = self._safe_extract(extract_gdscript, gdf)
             self._merge_extraction(res)
             
             # Map res:// path
@@ -98,7 +113,7 @@ class GodotGraphBuilder:
 
         # 3. Extract all Scene files (.tscn)
         for scnf in file_map["scene"]:
-            res = extract_tscn(scnf, root=self.project_path)
+            res = self._safe_extract(extract_tscn, scnf)
             self._merge_extraction(res)
 
             rel = scnf.relative_to(self.project_path).as_posix()
@@ -116,7 +131,7 @@ class GodotGraphBuilder:
 
         # 4. Extract all Resource files (.tres)
         for tresf in file_map["resource"]:
-            res = extract_tres(tresf, root=self.project_path)
+            res = self._safe_extract(extract_tres, tresf)
             self._merge_extraction(res)
 
             try:
@@ -151,15 +166,30 @@ class GodotGraphBuilder:
 
         return self.graph
 
+    def _safe_extract(self, extractor, path: Path) -> dict:
+        """Run one extractor; a single malformed file must not abort the whole build."""
+        try:
+            return extractor(path, root=self.project_path)
+        except Exception as e:
+            print(f"[graphify-gdscript] skipped {path}: {type(e).__name__}: {e}", file=sys.stderr)
+            return {"nodes": [], "edges": []}
+
     def _merge_extraction(self, res: dict) -> None:
         """Merge a file's nodes and edges into builder collections."""
         for n in res.get("nodes", []):
             nid = n["id"]
-            if nid not in self.nodes:
+            existing = self.nodes.get(nid)
+            if existing is None:
                 self.nodes[nid] = n
+            elif _is_reference_kind(existing.get("kind", "")) and not _is_reference_kind(n.get("kind", "")):
+                # A real definition replaces a placeholder reference, keeping extra metadata.
+                self.nodes[nid] = {**existing, **n}
+            elif _is_reference_kind(n.get("kind", "")) and not _is_reference_kind(existing.get("kind", "")):
+                # A reference must never clobber a definition (e.g. autoload_ref vs autoload_singleton).
+                for k, v in n.items():
+                    existing.setdefault(k, v)
             else:
-                # Merge metadata
-                self.nodes[nid].update(n)
+                existing.update(n)
 
         for e in res.get("edges", []):
             self.edges.append(e)
@@ -250,7 +280,7 @@ class GodotGraphBuilder:
             "stats": {
                 "total_nodes": len(self.nodes),
                 "total_edges": len(self.edges),
-                "total_files": len(self.files_by_res_path) + len(self.scenes_by_res_path),
+                "total_files": len(set(self.files_by_res_path.values()) | set(self.scenes_by_res_path.values())),
                 "raw_words": self.total_raw_words,
                 "raw_lines": self.total_raw_lines,
                 "estimated_raw_tokens": int(self.total_raw_words * 1.35),
