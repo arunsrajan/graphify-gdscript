@@ -1,0 +1,43 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "graphify-gdscript"
+version = "1.0.0"
+description = "Godot Engine GDScript Knowledge Graph generator & LLM Token Reduction Optimizer for Agentic AI IDEs."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [
+    { name = "Graphify Team" }
+]
+keywords = [
+    "godot",
+    "gdscript",
+    "graphify",
+    "knowledge-graph",
+    "llm",
+    "token-reduction",
+    "agentic-ai",
+    "mcp",
+    "ai-ide",
+    "game-dev"
+]
+dependencies = [
+    "networkx>=3.0",
+    "tree-sitter>=0.22.0",
+    "tree-sitter-gdscript>=6.1.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+]
+
+[project.scripts]
+graphify-gdscript = "graphify_gdscript.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["graphify_gdscript*"]

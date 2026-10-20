@@ -1,0 +1,122 @@
+[gd_scene load_steps=2 format=3 uid="uid://c7x9m8yq1j2k3"]
+
+[ext_resource type="Script" path="res://addons/graphify_gdscript/graphify_dock.gd" id="1_dock"]
+
+[node name="GraphifyGDScript" type="Control"]
+custom_minimum_size = Vector2(300, 400)
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("1_dock")
+
+[node name="VBox" type="VBoxContainer" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = 12.0
+offset_top = 12.0
+offset_right = -12.0
+offset_bottom = -12.0
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_constants/separation = 10
+
+[node name="Header" type="HBoxContainer" parent="VBox"]
+layout_mode = 2
+
+[node name="Title" type="Label" parent="VBox/Header"]
+layout_mode = 2
+theme_override_font_sizes/font_size = 15
+text = "Graphify GDScript Architecture"
+
+[node name="Banner" type="PanelContainer" parent="VBox"]
+layout_mode = 2
+
+[node name="LabelSavings" type="Label" parent="VBox/Banner"]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.2, 0.9, 0.5, 1)
+theme_override_font_sizes/font_size = 13
+text = "⚡ 98.5% TOKEN REDUCTION SAVINGS"
+horizontal_alignment = 1
+
+[node name="Grid" type="GridContainer" parent="VBox"]
+layout_mode = 2
+columns = 2
+theme_override_constants/h_separation = 12
+theme_override_constants/v_separation = 4
+
+[node name="LblScripts" type="Label" parent="VBox/Grid"]
+layout_mode = 2
+text = "GDScript Files:"
+
+[node name="ValScripts" type="Label" parent="VBox/Grid"]
+layout_mode = 2
+text = "0"
+
+[node name="LblScenes" type="Label" parent="VBox/Grid"]
+layout_mode = 2
+text = "Scene (.tscn) Files:"
+
+[node name="ValScenes" type="Label" parent="VBox/Grid"]
+layout_mode = 2
+text = "0"
+
+[node name="LblRawTokens" type="Label" parent="VBox/Grid"]
+layout_mode = 2
+text = "Raw Project Tokens:"
+
+[node name="ValRawTokens" type="Label" parent="VBox/Grid"]
+layout_mode = 2
+text = "~0 tokens"
+
+[node name="LblGraphTokens" type="Label" parent="VBox/Grid"]
+layout_mode = 2
+text = "Graphify Context:"
+
+[node name="ValGraphTokens" type="Label" parent="VBox/Grid"]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.22, 0.74, 0.97, 1)
+text = "~1,500 tokens"
+
+[node name="Actions" type="HBoxContainer" parent="VBox"]
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="BtnGenerate" type="Button" parent="VBox/Actions"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "⚡ Build Graph"
+
+[node name="BtnOpenViz" type="Button" parent="VBox/Actions"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "🌐 Open Visualizer"
+
+[node name="BtnCopyPrompt" type="Button" parent="VBox/Actions"]
+layout_mode = 2
+size_flags_horizontal = 3
+text = "📋 Copy AI Context"
+
+[node name="QuerySection" type="HBoxContainer" parent="VBox"]
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="QueryInput" type="LineEdit" parent="VBox/QuerySection"]
+layout_mode = 2
+size_flags_horizontal = 3
+placeholder_text = "Search graph (e.g. player health, signals)..."
+
+[node name="BtnRunQuery" type="Button" parent="VBox/QuerySection"]
+layout_mode = 2
+text = "Query Graph"
+
+[node name="LogOutput" type="TextEdit" parent="VBox"]
+layout_mode = 2
+size_flags_vertical = 3
+placeholder_text = "Graphify logs will appear here..."
+editable = false
+wrap_mode = 1

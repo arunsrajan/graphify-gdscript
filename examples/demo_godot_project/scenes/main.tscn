@@ -1,0 +1,14 @@
+[gd_scene load_steps=3 format=3 uid="uid://e4n7m9q2k5v1"]
+
+[ext_resource type="PackedScene" path="res://scenes/player.tscn" id="1_player_scene"]
+[ext_resource type="PackedScene" path="res://scenes/hud.tscn" id="2_hud_scene"]
+
+[node name="Main" type="Node2D"]
+
+[node name="PlayerInstance" parent="." instance=ExtResource("1_player_scene")]
+position = Vector2(576, 550)
+
+[node name="EnemySpawner" type="Node2D" parent="."]
+position = Vector2(576, 50)
+
+[node name="HUDInstance" parent="." instance=ExtResource("2_hud_scene")]
