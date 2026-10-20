@@ -5,15 +5,72 @@ to query Godot knowledge graphs with strict token-budget optimization.
 """
 from __future__ import annotations
 
+
+import io
 import json
 import sys
+import threading
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from graphify_gdscript.graph_builder import GodotGraphBuilder
-from graphify_gdscript.cluster import detect_communities, label_communities
 from graphify_gdscript.god_nodes import find_god_nodes
 from graphify_gdscript.token_optimizer import TokenReductionEngine
+
+SERVER_VERSION = "1.0.0"
+SUPPORTED_PROTOCOL_VERSIONS = ("2025-06-18", "2025-03-26", "2024-11-05")
+
+TOOLS: List[Dict[str, Any]] = [
+    {
+        "name": "gdscript_query_graph",
+        "description": "Query Godot knowledge graph with BFS/DFS within a token budget to reduce LLM prompt tokens by 90-99%.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "question": {"type": "string", "description": "Question or keyword to search in Godot project"},
+                "token_budget": {"type": "integer", "description": "Token budget cap (default 1500)", "default": 1500},
+                "mode": {"type": "string", "enum": ["bfs", "dfs"], "default": "bfs"},
+                "depth": {"type": "integer", "description": "Traversal depth (1-4)", "default": 2},
+            },
+            "required": ["question"],
+        },
+    },
+    {
+        "name": "gdscript_token_reduction_report",
+        "description": "Calculate LLM token and cost savings for this Godot project.",
+        "inputSchema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "gdscript_trace_signal",
+        "description": "Trace signal emissions, connections, and recipient callbacks across scenes and scripts.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "signal_name": {"type": "string", "description": "Name of the Godot signal"}
+            },
+            "required": ["signal_name"],
+        },
+    },
+    {
+        "name": "gdscript_get_autoloads",
+        "description": "List all global Autoload singletons and their implementation scripts/scenes.",
+        "inputSchema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "gdscript_get_god_nodes",
+        "description": "Identify architectural God Nodes and critical bottlenecks in the project.",
+        "inputSchema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "gdscript_rebuild_graph",
+        "description": "Rebuild the knowledge graph after project files changed on disk.",
+        "inputSchema": {"type": "object", "properties": {}},
+    },
+]
+
+
+class ToolError(Exception):
+    """Error reported back to the client as a tool result with isError set."""
 
 
 class GodotMCPServer:
@@ -22,39 +79,58 @@ class GodotMCPServer:
         self.builder: Optional[GodotGraphBuilder] = None
         self.optimizer: Optional[TokenReductionEngine] = None
         self.graph = None
-        self.communities = {}
-        self.community_labels = {}
+        self._build_lock = threading.Lock()
+        self._out = sys.stdout.buffer if hasattr(sys.stdout, "buffer") else sys.stdout
+        self._out_lock = threading.Lock()
 
-    def ensure_graph(self) -> None:
-        """Load or build the project knowledge graph."""
-        if self.graph is not None:
-            return
+    def ensure_graph(self, force: bool = False) -> None:
+        """Build the project knowledge graph (once, unless forced)."""
+        with self._build_lock:
+            if self.graph is not None and not force:
+                return
+            if not self.project_path.is_dir():
+                raise ToolError(f"Project path does not exist or is not a directory: {self.project_path}")
+            builder = GodotGraphBuilder(self.project_path)
+            graph = builder.build()
+            stats = builder.to_dict()["stats"]
+            self.optimizer = TokenReductionEngine(graph, stats["estimated_raw_tokens"])
+            self.builder = builder
+            self.graph = graph
 
-        out_json = self.project_path / "graphify-out" / "graph.json"
-        if out_json.exists():
+    def prebuild_in_background(self) -> None:
+        """Warm the graph off the protocol thread so the first tool call returns fast."""
+        def _warm() -> None:
             try:
-                # Load existing graph
-                pass
-            except Exception:
-                pass
+                self.ensure_graph()
+            except Exception as e:  # reported again on the first tool call
+                print(f"[graphify-gdscript] graph prebuild failed: {e}", file=sys.stderr, flush=True)
 
-        # Build fresh graph
-        self.builder = GodotGraphBuilder(self.project_path)
-        self.graph = self.builder.build()
-        self.communities = detect_communities(self.graph)
-        self.community_labels = label_communities(self.graph, self.communities)
-        self.optimizer = TokenReductionEngine(self.graph, self.builder.to_dict()["stats"]["estimated_raw_tokens"])
+        threading.Thread(target=_warm, name="graph-prebuild", daemon=True).start()
 
-    def handle_tool_call(self, name: str, args: Dict[str, Any]) -> Dict[str, Any]:
+    def handle_tool_call(self, name: str, args: Optional[Dict[str, Any]]) -> Dict[str, Any]:
         """Dispatch tool calls."""
+        args = args or {}
+        if name not in {t["name"] for t in TOOLS}:
+            raise ToolError(f"Unknown tool: {name}")
+
+        if name == "gdscript_rebuild_graph":
+            self.ensure_graph(force=True)
+            stats = self.builder.to_dict()["stats"]
+            return {"content": [{"type": "text", "text": f"Graph rebuilt: {stats['total_nodes']} nodes, {stats['total_edges']} edges, {stats['total_files']} files."}]}
+
         self.ensure_graph()
 
         if name == "gdscript_query_graph":
-            question = args.get("question", "")
-            token_budget = int(args.get("token_budget", 1500))
+            question = str(args.get("question", "")).strip()
+            if not question:
+                raise ToolError("'question' is required")
+            try:
+                token_budget = max(100, int(args.get("token_budget", 1500)))
+                depth = min(max(int(args.get("depth", 2)), 1), 4)
+            except (TypeError, ValueError):
+                raise ToolError("'token_budget' and 'depth' must be integers")
             mode = args.get("mode", "bfs")
-            depth = int(args.get("depth", 2))
-            
+
             result = self.optimizer.query(question, token_budget=token_budget, mode=mode, depth=depth)
             return {
                 "content": [
@@ -87,15 +163,35 @@ class GodotMCPServer:
             return {"content": [{"type": "text", "text": report}]}
 
         elif name == "gdscript_trace_signal":
-            signal_name = args.get("signal_name", "").strip()
+            signal_name = str(args.get("signal_name", "")).strip()
+            if not signal_name:
+                raise ToolError("'signal_name' is required")
+            wanted = signal_name.lower()
+
+            def node_signal_name(nid: str) -> str:
+                d = self.graph.nodes.get(nid, {})
+                if d.get("kind") == "signal":
+                    return (d.get("signal_name") or d.get("label", "").split(".")[-1]).lower()
+                if d.get("kind") == "signal_ref":
+                    return d.get("label", "").replace("Signal:", "").lower()
+                return ""
+
             matching_edges = []
+            seen = set()
             for u, v, data in self.graph.edges(data=True):
                 rel = data.get("relation", "")
-                if rel in ("emits", "connects_to") and signal_name.lower() in str(data).lower():
-                    src_lbl = self.graph.nodes.get(u, {}).get("label", u)
-                    tgt_lbl = self.graph.nodes.get(v, {}).get("label", v)
-                    loc = data.get("source_location", "")
-                    matching_edges.append(f"- `{src_lbl}` --[{rel}]--> `{tgt_lbl}` ({loc})")
+                if rel not in ("emits", "connects_to", "declares_signal"):
+                    continue
+                if wanted not in (node_signal_name(u), node_signal_name(v)):
+                    continue
+                src_lbl = self.graph.nodes.get(u, {}).get("label", u)
+                tgt_lbl = self.graph.nodes.get(v, {}).get("label", v)
+                loc = data.get("source_location", "")
+                sf = Path(data.get("source_file", "")).name
+                line = f"- `{src_lbl}` --[{rel}]--> `{tgt_lbl}` ({sf} {loc})".replace(" ()", "")
+                if line not in seen:
+                    seen.add(line)
+                    matching_edges.append(line)
 
             text = f"## Signal Trace for: `{signal_name}`\n\n" + ("\n".join(matching_edges) if matching_edges else "No matching signal connections found.")
             return {"content": [{"type": "text", "text": text}]}
@@ -106,7 +202,7 @@ class GodotMCPServer:
             ]
             lines = ["## Global Autoload Singletons in Project:\n"]
             for a in autoload_nodes:
-                lines.append(f"- **{a.get('label')}**: `{a.get('res_path')}`")
+                lines.append(f"- **{a.get('singleton_name') or a.get('label')}**: `{a.get('res_path')}`")
             return {"content": [{"type": "text", "text": "\n".join(lines)}]}
 
         elif name == "gdscript_get_god_nodes":
@@ -116,99 +212,98 @@ class GodotMCPServer:
                 lines.append(f"- **{g['label']}** ({g['kind']}): Degree {g['degree']} (In: {g['in_degree']}, Out: {g['out_degree']})\n  *Role:* {g['architectural_role']}")
             return {"content": [{"type": "text", "text": "\n".join(lines)}]}
 
-        else:
-            return {"error": f"Unknown tool: {name}"}
+        raise ToolError(f"Unknown tool: {name}")
+
+    # ------------------------------------------------------------------
+    # JSON-RPC / MCP stdio transport
+    # ------------------------------------------------------------------
+
+    def _send(self, msg: Dict[str, Any]) -> None:
+        data = json.dumps(msg, ensure_ascii=False) + "\n"
+        with self._out_lock:
+            if not isinstance(self._out, io.TextIOBase):
+                data = data.encode("utf-8")
+            self._out.write(data)
+            self._out.flush()
+
+    def _send_error(self, req_id: Any, code: int, message: str) -> None:
+        self._send({"jsonrpc": "2.0", "id": req_id, "error": {"code": code, "message": message}})
+
+    def handle_message(self, msg: Any) -> Optional[Dict[str, Any]]:
+        """Handle one decoded JSON-RPC message; returns the response or None for notifications."""
+        if not isinstance(msg, dict):
+            return {"jsonrpc": "2.0", "id": None, "error": {"code": -32600, "message": "Invalid Request"}}
+
+        method = msg.get("method")
+        req_id = msg.get("id")
+        is_notification = "id" not in msg
+
+        if method is None:
+            # A response to a server->client request (we never send any) - ignore.
+            return None
+        if is_notification:
+            # notifications/initialized, notifications/cancelled, ... need no reply.
+            return None
+
+        def ok(result: Dict[str, Any]) -> Dict[str, Any]:
+            return {"jsonrpc": "2.0", "id": req_id, "result": result}
+
+        if method == "initialize":
+            params = msg.get("params") or {}
+            requested = params.get("protocolVersion")
+            version = requested if requested in SUPPORTED_PROTOCOL_VERSIONS else SUPPORTED_PROTOCOL_VERSIONS[0]
+            self.prebuild_in_background()
+            return ok({
+                "protocolVersion": version,
+                "capabilities": {"tools": {"listChanged": False}},
+                "serverInfo": {"name": "graphify-gdscript", "version": SERVER_VERSION},
+            })
+        if method == "ping":
+            return ok({})
+        if method == "tools/list":
+            return ok({"tools": TOOLS})
+        if method == "tools/call":
+            params = msg.get("params") or {}
+            try:
+                return ok(self.handle_tool_call(params.get("name", ""), params.get("arguments")))
+            except Exception as e:
+                text = str(e) if isinstance(e, ToolError) else f"{type(e).__name__}: {e}"
+                return ok({"content": [{"type": "text", "text": f"Error: {text}"}], "isError": True})
+        if method in ("resources/list", "resources/templates/list", "prompts/list"):
+            key = {"resources/list": "resources", "resources/templates/list": "resourceTemplates", "prompts/list": "prompts"}[method]
+            return ok({key: []})
+
+        return {"jsonrpc": "2.0", "id": req_id, "error": {"code": -32601, "message": f"Method not found: {method}"}}
 
     def run_stdio(self) -> None:
-        """Run MCP stdio protocol loop."""
-        for line in sys.stdin:
-            line = line.strip()
+        """Run MCP stdio protocol loop (newline-delimited JSON-RPC over UTF-8)."""
+        stdin = sys.stdin.buffer if hasattr(sys.stdin, "buffer") else sys.stdin
+        # Write raw UTF-8 bytes: no locale codec and no CRLF translation on Windows.
+        self._out = sys.stdout.buffer if hasattr(sys.stdout, "buffer") else sys.stdout
+        # Anything else that prints must not corrupt the protocol stream.
+        sys.stdout = sys.stderr
+
+        while True:
+            raw = stdin.readline()
+            if not raw:
+                break  # client closed stdin
+            line = raw.decode("utf-8", errors="replace") if isinstance(raw, bytes) else raw
+            line = line.strip().lstrip("\ufeff")
             if not line:
                 continue
             try:
                 msg = json.loads(line)
-                method = msg.get("method")
-                req_id = msg.get("id")
-
-                if method == "tools/list":
-                    resp = {
-                        "jsonrpc": "2.0",
-                        "id": req_id,
-                        "result": {
-                            "tools": [
-                                {
-                                    "name": "gdscript_query_graph",
-                                    "description": "Query Godot knowledge graph with BFS/DFS within a token budget to reduce LLM prompt tokens by 90-99%.",
-                                    "inputSchema": {
-                                        "type": "object",
-                                        "properties": {
-                                            "question": {"type": "string", "description": "Question or keyword to search in Godot project"},
-                                            "token_budget": {"type": "integer", "description": "Token budget cap (default 1500)", "default": 1500},
-                                            "mode": {"type": "string", "enum": ["bfs", "dfs"], "default": "bfs"},
-                                            "depth": {"type": "integer", "default": 2}
-                                        },
-                                        "required": ["question"]
-                                    }
-                                },
-                                {
-                                    "name": "gdscript_token_reduction_report",
-                                    "description": "Calculate LLM token and cost savings for this Godot project.",
-                                    "inputSchema": {"type": "object", "properties": {}}
-                                },
-                                {
-                                    "name": "gdscript_trace_signal",
-                                    "description": "Trace signal emissions, connections, and recipient callbacks across scenes and scripts.",
-                                    "inputSchema": {
-                                        "type": "object",
-                                        "properties": {
-                                            "signal_name": {"type": "string", "description": "Name of the Godot signal"}
-                                        },
-                                        "required": ["signal_name"]
-                                    }
-                                },
-                                {
-                                    "name": "gdscript_get_autoloads",
-                                    "description": "List all global Autoload singletons and their implementation scripts/scenes.",
-                                    "inputSchema": {"type": "object", "properties": {}}
-                                },
-                                {
-                                    "name": "gdscript_get_god_nodes",
-                                    "description": "Identify architectural God Nodes and critical bottlenecks in the project.",
-                                    "inputSchema": {"type": "object", "properties": {}}
-                                }
-                            ]
-                        }
-                    }
-                    sys.stdout.write(json.dumps(resp) + "\n")
-                    sys.stdout.flush()
-
-                elif method == "tools/call":
-                    params = msg.get("params", {})
-                    tool_name = params.get("name")
-                    args = params.get("arguments", {})
-                    res = self.handle_tool_call(tool_name, args)
-                    resp = {"jsonrpc": "2.0", "id": req_id, "result": res}
-                    sys.stdout.write(json.dumps(resp) + "\n")
-                    sys.stdout.flush()
-
-                elif method == "initialize":
-                    resp = {
-                        "jsonrpc": "2.0",
-                        "id": req_id,
-                        "result": {
-                            "protocolVersion": "2024-11-05",
-                            "capabilities": {"tools": {}},
-                            "serverInfo": {"name": "graphify-gdscript", "version": "1.0.0"}
-                        }
-                    }
-                    sys.stdout.write(json.dumps(resp) + "\n")
-                    sys.stdout.flush()
-
+            except ValueError as e:
+                self._send_error(None, -32700, f"Parse error: {e}")
+                continue
+            try:
+                resp = self.handle_message(msg)
             except Exception as e:
-                err_resp = {"jsonrpc": "2.0", "id": req_id, "error": {"code": -32603, "message": str(e)}}
-                sys.stdout.write(json.dumps(err_resp) + "\n")
-                sys.stdout.flush()
-
+                req_id = msg.get("id") if isinstance(msg, dict) else None
+                resp = None if isinstance(msg, dict) and "id" not in msg else {
+                    "jsonrpc": "2.0", "id": req_id, "error": {"code": -32603, "message": str(e)}}
+            if resp is not None:
+                self._send(resp)
 
 def main():
     path = sys.argv[1] if len(sys.argv) > 1 else "."

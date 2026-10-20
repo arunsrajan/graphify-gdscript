@@ -18,6 +18,7 @@ const TokenEstimator = preload("token_estimator.gd")
 @onready var log_output: TextEdit = $VBox/LogOutput
 
 var last_metrics: Dictionary = {}
+var _worker: Thread
 
 func _ready() -> void:
 	if not Engine.is_editor_hint():
@@ -48,6 +49,42 @@ func refresh_metrics() -> void:
 		var pct = last_metrics.get("percent_saved", 0.0)
 		label_savings.text = "⚡ %0.1f%% TOKEN REDUCTION SAVINGS" % pct
 
+func _exit_tree() -> void:
+	if _worker:
+		_worker.wait_to_finish()
+		_worker = null
+
+func _python_cmd() -> String:
+	return "python" if OS.get_name() == "Windows" else "python3"
+
+# Runs the CLI on a worker thread so the editor stays responsive during long scans.
+func _run_cli(args: Array, on_done: Callable) -> void:
+	if _worker:
+		if _worker.is_alive():
+			_log("[Graphify] A previous command is still running, please wait...")
+			return
+		_worker.wait_to_finish()
+	_set_busy(true)
+	_worker = Thread.new()
+	_worker.start(_cli_thread.bind(args, on_done))
+
+func _cli_thread(args: Array, on_done: Callable) -> void:
+	var output: Array = []
+	var exit_code := OS.execute(_python_cmd(), ["-m", "graphify_gdscript.cli"] + args, output, true)
+	_finish_cli.call_deferred(exit_code, output, on_done)
+
+func _finish_cli(exit_code: int, output: Array, on_done: Callable) -> void:
+	if _worker:
+		_worker.wait_to_finish()
+		_worker = null
+	_set_busy(false)
+	on_done.call(exit_code, output)
+
+func _set_busy(busy: bool) -> void:
+	for b in [btn_generate, btn_run_query]:
+		if b:
+			b.disabled = busy
+
 func _log(msg: String) -> void:
 	if log_output:
 		log_output.text += msg + "\n"
@@ -56,18 +93,17 @@ func _on_btn_generate_pressed() -> void:
 	_log("[Graphify] Generating Godot Architecture Knowledge Graph...")
 	
 	var global_res = ProjectSettings.globalize_path("res://")
-	var output: Array = []
-	
-	# Execute graphify-gdscript CLI
-	var exit_code = OS.execute("python", ["-m", "graphify_gdscript.cli", "scan", global_res], output, true)
+	_run_cli(["scan", global_res], _on_scan_done)
+
+func _on_scan_done(exit_code: int, output: Array) -> void:
 	if exit_code == 0:
 		_log("[Graphify] Success! Knowledge Graph generated at: res://graphify-out/")
 		for l in output:
 			_log(str(l))
 	else:
-		# Fallback if python not in OS path or command variant
-		_log("[Graphify] Generated internal structural report. Run `graphify-gdscript scan` in IDE terminal for full HTML.")
-	
+		_log("[Graphify] Scan failed (exit code %d). Is graphify-gdscript installed for '%s'? Try `graphify-gdscript scan` in a terminal." % [exit_code, _python_cmd()])
+		for l in output:
+			_log(str(l))
 	refresh_metrics()
 
 func _on_btn_open_viz_pressed() -> void:
@@ -100,10 +136,10 @@ func _on_btn_run_query_pressed() -> void:
 
 	_log("[Graphify] Querying graph for: \"" + q + "\" (Budget: 1500 tokens)...")
 	var global_res = ProjectSettings.globalize_path("res://")
-	var output: Array = []
-	var exit_code = OS.execute("python", ["-m", "graphify_gdscript.cli", "query", q, global_res], output, true)
-	if exit_code == 0:
-		for l in output:
-			_log(str(l))
-	else:
-		_log("[Graphify] Executed local keyword filter for: " + q)
+	_run_cli(["query", q, global_res], _on_query_done)
+
+func _on_query_done(exit_code: int, output: Array) -> void:
+	if exit_code != 0:
+		_log("[Graphify] Query failed (exit code %d):" % exit_code)
+	for l in output:
+		_log(str(l))
