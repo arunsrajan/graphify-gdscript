@@ -73,7 +73,8 @@ def cmd_scan(args: argparse.Namespace) -> int:
 
     # 2. Export graph.html
     html_path = out_dir / "graph.html"
-    generate_html_visualization(G, communities, community_labels, stats, html_path)
+    generate_html_visualization(G, communities, community_labels,
+                                {**stats, "query_tokens": sample_query["actual_tokens"]}, html_path)
 
     # 3. Export GRAPH_REPORT.md
     report_path = out_dir / "GRAPH_REPORT.md"
