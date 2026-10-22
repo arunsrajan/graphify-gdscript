@@ -221,14 +221,23 @@ def cmd_platform(args: argparse.Namespace) -> int:
     return uninstall(args.command, resolve_project_root(args.path), project=args.project)
 
 
+def godot_addon_source(package_dir: Path = Path(__file__).resolve().parent) -> Path | None:
+    """The Godot editor addon to install: the copy shipped in the wheel (godot_addon/),
+    else addons/graphify_gdscript/ in the source checkout (editable installs)."""
+    for candidate in (package_dir / "godot_addon", package_dir.parent / "addons" / "graphify_gdscript"):
+        if (candidate / "plugin.cfg").is_file():
+            return candidate
+    return None
+
+
 def cmd_install_plugin(args: argparse.Namespace) -> int:
     dest_project = Path(args.path).resolve()
     if not (dest_project / "project.godot").exists():
         print(f"Warning: {dest_project} does not have project.godot, but proceeding with installation.")
 
-    source_addon = Path(__file__).parent.parent / "addons" / "graphify_gdscript"
-    if not source_addon.exists():
-        print(f"Error: Could not locate source addon at {source_addon}")
+    source_addon = godot_addon_source()
+    if source_addon is None:
+        print("Error: the Godot addon is missing from this graphify-gdscript installation; reinstall it.")
         return 1
 
     target_addon = dest_project / "addons" / "graphify_gdscript"
@@ -236,7 +245,7 @@ def cmd_install_plugin(args: argparse.Namespace) -> int:
     if target_addon.exists():
         shutil.rmtree(target_addon)
 
-    shutil.copytree(source_addon, target_addon)
+    shutil.copytree(source_addon, target_addon, ignore=shutil.ignore_patterns(".*", "*.import", "__pycache__"))
     print(f"Successfully installed Godot Editor Plugin to: {target_addon}")
     print("To enable the plugin: Open Godot -> Project -> Project Settings -> Plugins -> Enable 'Graphify GDScript'")
     return 0

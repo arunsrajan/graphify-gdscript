@@ -1,0 +1,5 @@
+include README.md LICENSE
+# The Godot editor addon, copied into the wheel as graphify_gdscript/godot_addon/ by setup.py
+recursive-include addons/graphify_gdscript *
+recursive-include graphify_gdscript/assets *.md
+global-exclude *.py[cod] *.import
