@@ -41,3 +41,8 @@ graphify-gdscript = "graphify_gdscript.cli:main"
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["graphify_gdscript*"]
+
+[tool.setuptools.package-data]
+graphify_gdscript = ["assets/*.md"]
+# The Godot editor addon (addons/graphify_gdscript/) is copied into the wheel as
+# graphify_gdscript/godot_addon/ by the build_py command in setup.py.

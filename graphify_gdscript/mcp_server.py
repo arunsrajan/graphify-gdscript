@@ -14,7 +14,9 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from graphify_gdscript.graph_builder import GodotGraphBuilder
+from graphify_gdscript.graph_queries import explain_node, shortest_path, trace_signal
 from graphify_gdscript.god_nodes import find_god_nodes
+from graphify_gdscript.project import resolve_project_root
 from graphify_gdscript.token_optimizer import TokenReductionEngine
 
 SERVER_VERSION = "1.0.0"
@@ -60,6 +62,29 @@ TOOLS: List[Dict[str, Any]] = [
         "name": "gdscript_get_god_nodes",
         "description": "Identify architectural God Nodes and critical bottlenecks in the project.",
         "inputSchema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "gdscript_shortest_path",
+        "description": "Shortest chain of relations (calls, signals, scene wiring, autoloads) linking two symbols.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "source": {"type": "string", "description": "First symbol, e.g. Player"},
+                "target": {"type": "string", "description": "Second symbol, e.g. GameManager.trigger_game_over"},
+            },
+            "required": ["source", "target"],
+        },
+    },
+    {
+        "name": "gdscript_explain",
+        "description": "One symbol (class, function, signal, scene node, autoload) with its location and every relation in and out.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "symbol": {"type": "string", "description": "Symbol name, e.g. take_damage"}
+            },
+            "required": ["symbol"],
+        },
     },
     {
         "name": "gdscript_rebuild_graph",
@@ -166,34 +191,22 @@ class GodotMCPServer:
             signal_name = str(args.get("signal_name", "")).strip()
             if not signal_name:
                 raise ToolError("'signal_name' is required")
-            wanted = signal_name.lower()
+            text = trace_signal(self.graph, signal_name, self.project_path)
+            return {"content": [{"type": "text", "text": text}]}
 
-            def node_signal_name(nid: str) -> str:
-                d = self.graph.nodes.get(nid, {})
-                if d.get("kind") == "signal":
-                    return (d.get("signal_name") or d.get("label", "").split(".")[-1]).lower()
-                if d.get("kind") == "signal_ref":
-                    return d.get("label", "").replace("Signal:", "").lower()
-                return ""
+        elif name == "gdscript_shortest_path":
+            source = str(args.get("source", "")).strip()
+            target = str(args.get("target", "")).strip()
+            if not source or not target:
+                raise ToolError("'source' and 'target' are required")
+            text = shortest_path(self.graph, source, target, self.project_path)
+            return {"content": [{"type": "text", "text": text}]}
 
-            matching_edges = []
-            seen = set()
-            for u, v, data in self.graph.edges(data=True):
-                rel = data.get("relation", "")
-                if rel not in ("emits", "connects_to", "declares_signal"):
-                    continue
-                if wanted not in (node_signal_name(u), node_signal_name(v)):
-                    continue
-                src_lbl = self.graph.nodes.get(u, {}).get("label", u)
-                tgt_lbl = self.graph.nodes.get(v, {}).get("label", v)
-                loc = data.get("source_location", "")
-                sf = Path(data.get("source_file", "")).name
-                line = f"- `{src_lbl}` --[{rel}]--> `{tgt_lbl}` ({sf} {loc})".replace(" ()", "")
-                if line not in seen:
-                    seen.add(line)
-                    matching_edges.append(line)
-
-            text = f"## Signal Trace for: `{signal_name}`\n\n" + ("\n".join(matching_edges) if matching_edges else "No matching signal connections found.")
+        elif name == "gdscript_explain":
+            symbol = str(args.get("symbol", "")).strip()
+            if not symbol:
+                raise ToolError("'symbol' is required")
+            text = explain_node(self.graph, symbol, self.project_path)
             return {"content": [{"type": "text", "text": text}]}
 
         elif name == "gdscript_get_autoloads":
@@ -306,8 +319,7 @@ class GodotMCPServer:
                 self._send(resp)
 
 def main():
-    path = sys.argv[1] if len(sys.argv) > 1 else "."
-    server = GodotMCPServer(path)
+    server = GodotMCPServer(resolve_project_root(sys.argv[1] if len(sys.argv) > 1 else None))
     server.run_stdio()
 
 
