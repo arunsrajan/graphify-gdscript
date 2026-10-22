@@ -41,3 +41,6 @@ graphify-gdscript = "graphify_gdscript.cli:main"
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["graphify_gdscript*"]
+
+[tool.setuptools.package-data]
+graphify_gdscript = ["assets/*.md"]

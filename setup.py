@@ -4,6 +4,7 @@ setup(
     name="graphify-gdscript",
     version="1.0.0",
     packages=find_packages(),
+    package_data={"graphify_gdscript": ["assets/*.md"]},
     install_requires=[
         "networkx>=3.0",
         "tree-sitter>=0.22.0",

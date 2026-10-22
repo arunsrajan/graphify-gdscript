@@ -64,6 +64,17 @@ def test_trace_signal_matches_signal_names_only(server):
     assert "player_died" not in text
 
 
+def test_path_and_explain_tools(server):
+    names = {t["name"] for t in server.handle_message(_req(8, "tools/list"))["result"]["tools"]}
+    assert {"gdscript_shortest_path", "gdscript_explain"} <= names
+    resp = server.handle_message(_req(9, "tools/call", {"name": "gdscript_shortest_path", "arguments": {"source": "Player", "target": "trigger_game_over"}}))
+    assert "## Path: `Player`" in resp["result"]["content"][0]["text"]
+    resp = server.handle_message(_req(10, "tools/call", {"name": "gdscript_explain", "arguments": {"symbol": "take_damage"}}))
+    assert "Player.take_damage" in resp["result"]["content"][0]["text"]
+    resp = server.handle_message(_req(11, "tools/call", {"name": "gdscript_explain", "arguments": {}}))
+    assert resp["result"]["isError"] is True
+
+
 def test_stdio_session_does_not_hang():
     proc = subprocess.Popen(
         [sys.executable, "-m", "graphify_gdscript.mcp_server", str(DEMO)],

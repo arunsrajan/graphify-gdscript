@@ -1,112 +1,54 @@
 ---
 name: graphify-gdscript
-description: "Godot Engine GDScript knowledge graph generator and LLM token reduction optimizer. Turns any Godot project (.gd, .tscn, project.godot, .tres) into an architectural knowledge graph with community clustering, god nodes, cross-file signal resolution, and GraphRAG token-budgeted search that slashes LLM prompt token consumption by up to 99%."
+description: "Godot GDScript knowledge graph. Use for any question about a Godot project's code or architecture (.gd scripts, .tscn scenes, project.godot autoloads, .tres resources, signals, node paths) - especially when graphify-out/graph.json exists. Builds the graph, answers questions from a token-budgeted subgraph, traces signals across scenes and scripts, and finds paths between symbols."
 ---
 
 # /graphify-gdscript
 
-Turn any Godot Game Engine project into a navigable, high-density knowledge graph. Resolves GDScript classes, methods, node paths (`$Node`, `%UniqueNode`), scene hierarchies (`.tscn`), autoload singletons (`project.godot`), and signal connections across decoupled systems.
+Turns a Godot 4.x / 3.x project into a knowledge graph of classes, functions, signals, scene trees, autoloads, node paths and resources, with the cross-file links an LLM usually misses: `.tscn` signal connections wired to `.gd` callbacks, autoload calls resolved to singleton scripts, and preloaded scenes resolved to their files.
 
-Massively slashes LLM prompt token consumption for any API provider (Gemini, Claude, OpenAI, DeepSeek, Local Ollama) by replacing massive full-codebase context dumps with targeted subgraphs.
+Answer from the graph first; read raw files only for lines the graph has already located.
 
 ## Usage
 
-```bash
-/graphify-gdscript                                   # full extraction & graph generation on current directory
-/graphify-gdscript <path>                            # run on specific Godot project path
-/graphify-gdscript query "<question>"                # GraphRAG search constrained to token budget (default 1500 tokens)
-/graphify-gdscript query "<question>" --budget 800   # ultra-compact context (cap answer context at N tokens)
-/graphify-gdscript query "<question>" --mode dfs     # deep call chain tracing (DFS)
-/graphify-gdscript trace "<signal_name>"             # trace signal emissions, .tscn connections, and callbacks
-/graphify-gdscript token-report                      # audit token reduction & cost savings vs whole-repo dump
-/graphify-gdscript mcp                               # start Model Context Protocol stdio server for IDEs
-/graphify-gdscript install-plugin <project_path>     # install Godot Editor Plugin to project addons/
-/graphify-gdscript patch-graphifyy                   # hook into upstream graphifyy to enable .gd & .tscn
+```
+/graphify-gdscript                         # build or refresh the graph for the current project
+/graphify-gdscript <path>                  # build the graph for a Godot project at <path>
+/graphify-gdscript query "<question>"      # answer from a token-budgeted subgraph
+/graphify-gdscript trace "<signal>"        # where a signal is declared, emitted and connected
+/graphify-gdscript path "<A>" "<B>"        # how two symbols are connected
+/graphify-gdscript explain "<symbol>"      # one symbol and everything wired to it
+/graphify-gdscript token-report            # token savings compared with pasting the whole repo
 ```
 
-## Why Godot Projects Waste Massive LLM Tokens
+In Codex, invoke the skill as `$graphify-gdscript`.
 
-Godot architectures decouple logic across:
-1. **Scripts (`.gd`)**: Methods, signals, variables, node paths (`$Sprite2D`, `%Hurtbox`).
-2. **Scenes (`.tscn`)**: Node tree hierarchies, instanced sub-scenes, and visual signal connections (`[connection signal="..." ...]`).
-3. **Autoloads (`project.godot`)**: Global Singletons (`GameManager`, `EventBus`).
-4. **Resources (`.tres`)**: Custom script-backed data resources.
+## What to run
 
-In naive LLM workflows, an AI assistant dumps 50,000 to 200,000+ tokens into context windows trying to trace a single bug, often hallucinating missing signal connections because connections are defined in `.tscn` files rather than `.gd` files.
+The CLI finds the project root by walking up to `project.godot`, so run commands from anywhere inside the project, or pass a path as the last argument.
 
-**Graphify-GDScript resolves this deterministically:**
-- Connects `.tscn` signal bindings to `.gd` callback methods.
-- Connects autoload references to singleton scripts.
-- Extracts subgraphs within a strict token budget (e.g. 1,000 to 1,500 tokens).
-- **Reduces token consumption by 90% to 99%** while providing 100% deterministic link traversal and exact file citations (`L{line}`).
+| Request | Command |
+|---|---|
+| build / refresh (no args, or a path) | `graphify-gdscript scan [<path>]` |
+| `query "<q>"` | `graphify-gdscript query "<q>" --budget 1500` (add `--mode dfs` for deep call chains) |
+| `trace "<signal>"` | `graphify-gdscript trace "<signal>"` |
+| `path "<A>" "<B>"` | `graphify-gdscript path "<A>" "<B>"` |
+| `explain "<symbol>"` | `graphify-gdscript explain "<symbol>"` |
+| `token-report` | `graphify-gdscript token-report` |
 
----
+After a scan, report the node and edge counts, the top god nodes, the subsystem communities and the token reduction. Outputs land in `graphify-out/`: `graph.json` (the graph), `GRAPH_REPORT.md` (architecture audit) and `graph.html` (interactive viewer).
 
-## Agent Execution Workflow
+When the graphify-gdscript MCP server is connected, prefer its tools over the CLI: `gdscript_query_graph`, `gdscript_trace_signal`, `gdscript_shortest_path`, `gdscript_explain`, `gdscript_get_autoloads`, `gdscript_get_god_nodes`, `gdscript_token_reduction_report`, and `gdscript_rebuild_graph` after editing files.
 
-When invoked with `/graphify-gdscript` in an agentic AI IDE (Antigravity, Cursor, Claude Code, Windsurf, Trae):
+## Rules
 
-### 1. For Query Commands (`/graphify-gdscript query "<question>"`)
-If `graphify-out/graph.json` exists or a question was asked:
-Run:
-```powershell
-graphify-gdscript query "<question>" --budget 1500
-```
-Use the pruned knowledge subgraph returned by the tool to answer the user's question. Cite the exact file paths and line numbers provided in the subgraph.
+- For a code or architecture question about a Godot project, run `query`, `trace`, `path` or `explain` before your first grep or raw read of `.gd`, `.tscn`, `.tres` or `project.godot` files. Put this rule in every subagent prompt that explores the project.
+- Cite the file paths and `L<line>` locations the graph returns. Never invent node paths, signals or autoloads the graph does not show.
+- Signals are often connected in `.tscn` files, not in code. Use `trace` before concluding a signal is unused.
+- After editing project files, run `graphify-gdscript scan` (or `gdscript_rebuild_graph`) so the graph stays current. It is AST-only and has no API cost.
 
-### 2. For Build / Scan Commands (`/graphify-gdscript [path]`)
-Run:
-```powershell
-graphify-gdscript scan "<path>"
-```
-Outputs generated in `<path>/graphify-out/`:
-- `graph.html`: Interactive dark-mode network visualizer with search, subsystem filters, and token reduction banner.
-- `graph.json`: Full GraphRAG JSON database of Godot entities and relations.
-- `GRAPH_REPORT.md`: Architectural audit report surfacing God Nodes and Subsystems.
+## Graph schema
 
-Report the summary to the user:
-- Total Nodes and Edges extracted.
-- Top God Nodes (e.g. `GameManager`, `EventBus`, `Player`).
-- Identified Subsystem Communities (e.g., Combat System, UI & HUD, Player Controller).
-- Exact Token Consumption Reduction (e.g., ~120,000 raw tokens -> ~1,400 graph tokens = 98.8% saved).
+Node kinds: `class`, `inner_class`, `function`, `static_func`, `signal`, `variable`, `export_var`, `onready_var`, `node_reference` (`$Path`, `%Unique`), `scene`, `scene_node`, `autoload_singleton`, `resource`, `file`, plus `*_ref` placeholders for symbols used but defined elsewhere.
 
-### 3. For Signal Tracing (`/graphify-gdscript trace "<signal_name>"`)
-Trace where the signal is declared, where it is emitted (in `.gd` code), and where it is connected (in `.tscn` or code):
-```powershell
-graphify-gdscript query "signal <signal_name> emission connection" --budget 1000
-```
-
-### 4. For Godot Editor Integration
-To install the Godot Editor Plugin dock into the project:
-```powershell
-graphify-gdscript install-plugin "<path_to_godot_project>"
-```
-Instruct the user to enable "Graphify GDScript" in Godot:
-`Project -> Project Settings -> Plugins -> Enable 'Graphify GDScript'`.
-
----
-
-## Entity and Edge Schema
-
-### Node Kinds
-- `class`: GDScript classes (`class_name Hero extends Node`)
-- `scene`: Godot scene roots (`Scene:player.tscn`)
-- `scene_node`: Nodes inside scenes (`test_scene:Gun/BulletSpawner`)
-- `autoload_singleton`: Global autoloads from `project.godot` (`Autoload:GameManager`)
-- `function`: Methods (`Player.take_damage`, `Player._physics_process`)
-- `signal`: Signal declarations (`Player.health_changed`)
-- `export_var` / `onready_var`: Exported variables and onready node references
-- `node_reference`: Node paths (`$Sprite2D`, `$"Weapon/Gun"`, `%Hurtbox`)
-- `resource`: Custom `.tres` resources
-
-### Edge Relations
-- `contains`: Class contains method / variable / inner class
-- `extends`: Class inheritance (`Player` extends `CharacterBody2D`)
-- `attaches_script`: Scene node attaches `.gd` script
-- `contains_node` / `child_node`: Scene tree hierarchy
-- `instantiates_scene`: Node instances packed sub-scene
-- `emits`: Method emits signal (`health_changed.emit`)
-- `connects_to`: Signal connects to target handler method
-- `references_node`: Variable references node path
-- `uses_autoload` / `calls_singleton`: Script accesses global singleton
-- `preloads` / `loads`: Script loads resource or scene
+Edge relations: `contains`, `extends`, `extends_project_class`, `declares_signal`, `emits`, `connects_to`, `calls`, `references_node`, `uses_autoload`, `calls_singleton`, `preloads`, `loads`, `contains_node`, `child_node`, `attaches_script`, `root_script`, `instantiates_scene`, `registers_autoload`, `implemented_by`, `instance_of_script`.

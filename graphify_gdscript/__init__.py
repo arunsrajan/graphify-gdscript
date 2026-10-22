@@ -1,24 +1,28 @@
 """Graphify GDScript: Knowledge Graphs & LLM Token Reduction for Godot Game Engine."""
-from graphify_gdscript.extractors.gdscript import extract_gdscript
-from graphify_gdscript.extractors.tscn import extract_tscn
-from graphify_gdscript.extractors.project_godot import extract_project_godot
-from graphify_gdscript.extractors.tres import extract_tres
-from graphify_gdscript.graph_builder import GodotGraphBuilder
-from graphify_gdscript.cluster import detect_communities, label_communities
-from graphify_gdscript.god_nodes import find_god_nodes
-from graphify_gdscript.token_optimizer import TokenReductionEngine
-from graphify_gdscript.bridge_graphify import patch_graphifyy
+from importlib import import_module
 
 __version__ = "1.0.0"
-__all__ = [
-    "extract_gdscript",
-    "extract_tscn",
-    "extract_project_godot",
-    "extract_tres",
-    "GodotGraphBuilder",
-    "detect_communities",
-    "label_communities",
-    "find_god_nodes",
-    "TokenReductionEngine",
-    "patch_graphifyy",
-]
+
+# Exports load lazily: the Claude Code hook (`graphify-gdscript guard`) runs before every
+# Read/Grep call and must not pay for importing networkx and tree-sitter.
+_EXPORTS = {
+    "extract_gdscript": "graphify_gdscript.extractors.gdscript",
+    "extract_tscn": "graphify_gdscript.extractors.tscn",
+    "extract_project_godot": "graphify_gdscript.extractors.project_godot",
+    "extract_tres": "graphify_gdscript.extractors.tres",
+    "GodotGraphBuilder": "graphify_gdscript.graph_builder",
+    "detect_communities": "graphify_gdscript.cluster",
+    "label_communities": "graphify_gdscript.cluster",
+    "find_god_nodes": "graphify_gdscript.god_nodes",
+    "TokenReductionEngine": "graphify_gdscript.token_optimizer",
+    "patch_graphifyy": "graphify_gdscript.bridge_graphify",
+}
+__all__ = list(_EXPORTS)
+
+
+def __getattr__(name):
+    if name in _EXPORTS:
+        value = getattr(import_module(_EXPORTS[name]), name)
+        globals()[name] = value
+        return value
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

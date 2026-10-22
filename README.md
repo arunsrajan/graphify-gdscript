@@ -50,11 +50,11 @@ Graphify-GDScript delivers a complete 4-tier solution:
    - Scene hierarchy (`.tscn`) and autoload singleton parser.
    - Community detection (Louvain) & God Node centrality analysis.
    - Interactive dark-mode HTML visualizer (`graph.html`).
-3. **Agentic AI IDE Slash Command (`/graphify-gdscript`)**:
-   - Slash command skill ready for Antigravity, Cursor, Claude Code, and Windsurf.
+3. **AI Assistant Skill (`/graphify-gdscript`)**:
+   - One command installs it into Claude Code, OpenAI Codex or Google Antigravity, with always-on rules (and a Claude Code hook) that send the assistant to the graph before it greps or reads raw `.gd` / `.tscn` files.
    - Constrains context answers strictly to a token budget (e.g. `--budget 1500`).
 4. **Model Context Protocol (MCP) Server**:
-   - Stdio MCP server exposing tools: `gdscript_query_graph`, `gdscript_token_reduction_report`, `gdscript_trace_signal`, `gdscript_get_autoloads`, `gdscript_get_god_nodes`, `gdscript_rebuild_graph`.
+   - Stdio MCP server exposing tools: `gdscript_query_graph`, `gdscript_trace_signal`, `gdscript_shortest_path`, `gdscript_explain`, `gdscript_get_autoloads`, `gdscript_get_god_nodes`, `gdscript_token_reduction_report`, `gdscript_rebuild_graph`.
 
 ---
 
@@ -62,12 +62,41 @@ Graphify-GDScript delivers a complete 4-tier solution:
 
 ### 1. Python Engine & CLI
 ```bash
-git clone https://github.com/developer/graphify-gdscript.git
+pip install git+https://github.com/arunsrajan/graphify-gdscript.git
+```
+Or, for development:
+```bash
+git clone https://github.com/arunsrajan/graphify-gdscript.git
 cd graphify-gdscript
 pip install -e .
 ```
 
-### 2. Godot Editor Plugin
+### 2. Install into your AI coding assistant
+Run from your Godot project folder (or pass its path as the last argument):
+
+| Assistant | Command | Then type |
+|---|---|---|
+| Claude Code | `graphify-gdscript claude install` | `/graphify-gdscript` |
+| OpenAI Codex | `graphify-gdscript codex install` | `$graphify-gdscript` |
+| Google Antigravity | `graphify-gdscript antigravity install` | `/graphify-gdscript` |
+| All three | `graphify-gdscript install --platform all` | |
+
+Options (all platforms):
+- `--mcp` also registers the graphify-gdscript MCP server with the assistant.
+- `--project` puts the skill inside the project too, and writes the bare `graphify-gdscript` command instead of an absolute path, so the files can be committed for your team. It prints the `git add` line.
+- `graphify-gdscript <platform> uninstall` (or `graphify-gdscript uninstall` for all) removes exactly what was added.
+
+What each install writes:
+
+| | Skill | Always-on rules | Extras | `--mcp` |
+|---|---|---|---|---|
+| Claude Code | `~/.claude/skills/graphify-gdscript/` (registered in `~/.claude/CLAUDE.md`) | `CLAUDE.md` | PreToolUse hooks in `.claude/settings.json` that nudge toward the graph before Grep/Read of Godot files | `.mcp.json` |
+| Codex | `~/.agents/skills/graphify-gdscript/` | `AGENTS.md` | | `~/.codex/config.toml` (`.codex/config.toml` with `--project`) |
+| Antigravity | `~/.gemini/config/skills/graphify-gdscript/` | `.agents/rules/graphify-gdscript.md` | `/graphify-gdscript` workflow in `.agents/workflows/` | `~/.gemini/antigravity/mcp_config.json` |
+
+With `--project`, skills go to `.claude/skills/` (Claude Code) or `.agents/skills/` (Codex and Antigravity) inside the project. Everything uses `graphify-gdscript` names inside clearly marked blocks, so it sits alongside an [upstream graphify](https://github.com/Graphify-Labs/graphify) install: neither one overwrites or removes the other. Existing files are merged, never replaced, and JSON or TOML config is backed up (`*.graphify-gdscript-bak`) before it is changed.
+
+### 3. Godot Editor Plugin
 Install the addon into any Godot project:
 ```bash
 graphify-gdscript install-plugin /path/to/my_godot_project
@@ -93,6 +122,14 @@ graphify-gdscript scan .
 graphify-gdscript query "how does player take damage and trigger game over" --budget 1500
 ```
 
+### Trace a Signal, Find a Path, Explain a Symbol
+```bash
+graphify-gdscript trace "health_changed"              # declared, emitted and connected (.gd and .tscn)
+graphify-gdscript path "Player" "trigger_game_over"   # shortest chain of calls, signals and scene wiring
+graphify-gdscript explain "take_damage"               # one symbol and everything wired to it
+```
+Project paths are optional everywhere: commands walk up from the current folder to `project.godot`.
+
 ### Audit Token Savings vs Whole-Repo Context
 ```bash
 graphify-gdscript token-report .
@@ -103,22 +140,18 @@ graphify-gdscript token-report .
 graphify-gdscript mcp .
 ```
 
-Register it with an **absolute** project path (IDEs may launch servers from a different working directory):
-```bash
-claude mcp add graphify-gdscript -- graphify-gdscript mcp /path/to/my_godot_project
-```
-Or in an `mcp.json` / `.mcp.json`:
+The easiest way to register it is `graphify-gdscript <claude|codex|antigravity> install --mcp`. To add it by hand:
 ```json
 {
   "mcpServers": {
     "graphify-gdscript": {
       "command": "graphify-gdscript",
-      "args": ["mcp", "/path/to/my_godot_project"]
+      "args": ["mcp"]
     }
   }
 }
 ```
-The graph is built in the background right after the client connects. Call `gdscript_rebuild_graph` after editing project files to refresh it.
+With no path, the server uses `$GRAPHIFY_GDSCRIPT_PROJECT`, then `$CLAUDE_PROJECT_DIR`, then the folder it was started in, and walks up to `project.godot`. Pass a path after `mcp` to pin one project. The graph is built in the background right after the client connects. Call `gdscript_rebuild_graph` after editing project files to refresh it.
 
 ### Hook into Upstream `graphifyy`
 ```bash
@@ -129,12 +162,15 @@ graphify-gdscript patch-graphifyy
 
 ## 🤖 Slash Command Usage in Agentic AI IDEs
 
-In Antigravity, Cursor, or Claude Code:
+After `graphify-gdscript <platform> install`, in Claude Code or Antigravity (use `$graphify-gdscript` in Codex):
 
 ```bash
+/graphify-gdscript                                     # build or refresh the graph
 /graphify-gdscript query "where is weapon_fired signal connected and handled?"
 /graphify-gdscript query "trace damage flow from enemy to player" --budget 1000
 /graphify-gdscript trace "health_changed"
+/graphify-gdscript path "Enemy" "GameManager"
+/graphify-gdscript explain "take_damage"
 /graphify-gdscript token-report
 ```
 
