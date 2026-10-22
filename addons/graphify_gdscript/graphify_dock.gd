@@ -109,7 +109,8 @@ func _on_scan_done(exit_code: int, output: Array) -> void:
 func _on_btn_open_viz_pressed() -> void:
 	var html_path = ProjectSettings.globalize_path("res://graphify-out/graph.html")
 	if FileAccess.file_exists("res://graphify-out/graph.html"):
-		OS.shell_open("file://" + html_path)
+		# A plain OS path, as Godot's docs advise: "file://" + "C:/..." is a malformed URL on Windows.
+		OS.shell_open(html_path)
 		_log("[Graphify] Opened interactive graph visualizer in browser.")
 	else:
 		_log("[Graphify] graph.html not found. Click 'Generate Knowledge Graph' first.")
