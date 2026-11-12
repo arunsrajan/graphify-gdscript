@@ -1,0 +1,65 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python-version: ["3.10", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+      - run: python -m pip install -e ".[dev]"
+      - run: python -m pytest -q
+
+  skill-package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Validate and build the Agensi skill zip
+        run: |
+          python -m pip install pyyaml
+          python - <<'PY'
+          import pathlib, re, yaml, zipfile
+
+          root = pathlib.Path("skills/graphify-gdscript")
+          text = (root / "SKILL.md").read_text(encoding="utf-8")
+          match = re.match(r"---\n(.*?)\n---\n(.+)", text, re.S)
+          assert match and match.group(2).strip(), "SKILL.md needs frontmatter and a body"
+          meta = yaml.safe_load(match.group(1))
+          assert meta["name"] == root.name, "name must match the folder"
+          assert re.fullmatch(r"[a-z0-9-]+", meta["name"]), "name must be lowercase slug"
+          assert meta["description"].strip(), "description is required"
+          assert (root / "README.md").is_file(), "README.md is missing"
+          assert any((root / d).is_dir() and any((root / d).iterdir()) for d in ("references", "examples")), "supporting files are missing"
+
+          banned = {".DS_Store", "Thumbs.db"}
+          out = pathlib.Path("dist")
+          out.mkdir(exist_ok=True)
+          with zipfile.ZipFile(out / "graphify-gdscript.zip", "w", zipfile.ZIP_DEFLATED) as z:
+              for p in sorted(root.rglob("*")):
+                  if p.is_file() and p.name not in banned and "__pycache__" not in p.parts:
+                      assert not p.is_symlink(), f"symlink not allowed: {p}"
+                      z.write(p, f"{root.name}/{p.relative_to(root).as_posix()}")
+          print("built", out / "graphify-gdscript.zip")
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: graphify-gdscript-skill
+          path: dist/graphify-gdscript.zip

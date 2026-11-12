@@ -1,6 +1,6 @@
 ---
 name: graphify-gdscript
-description: "Godot GDScript knowledge graph. Use for any question about a Godot project's code or architecture (.gd scripts, .tscn scenes, project.godot autoloads, .tres resources, signals, node paths) - especially when graphify-out/graph.json exists. Builds the graph, answers questions from a token-budgeted subgraph, traces signals across scenes and scripts, and finds paths between symbols."
+description: "Builds a knowledge graph of a Godot project and answers code questions from a small, cited subgraph instead of raw files. Use when the user asks how a Godot game works, where a signal is emitted or connected, what an autoload does, how two scripts or scenes are linked, or to explain, trace or refactor GDScript (.gd, .tscn, .tres, project.godot)."
 ---
 
 # /graphify-gdscript
@@ -8,6 +8,10 @@ description: "Godot GDScript knowledge graph. Use for any question about a Godot
 Turns a Godot 4.x / 3.x project into a knowledge graph of classes, functions, signals, scene trees, autoloads, node paths and resources, with the cross-file links an LLM usually misses: `.tscn` signal connections wired to `.gd` callbacks, autoload calls resolved to singleton scripts, and preloaded scenes resolved to their files.
 
 Answer from the graph first; read raw files only for lines the graph has already located.
+
+## Prerequisites
+
+The skill drives the local `graphify-gdscript` command-line tool (Python 3.9+), which must be on PATH. Check with `graphify-gdscript --help`. If it is missing, tell the user to install it; setup steps are in `references/setup.md`. The tool runs locally, parses the project with an AST, makes no network calls and needs no API key.
 
 ## Usage
 
@@ -39,6 +43,17 @@ The CLI finds the project root by walking up to `project.godot`, so run commands
 After a scan, report the node and edge counts, the top god nodes, the subsystem communities and the token reduction. Outputs land in `graphify-out/`: `graph.json` (the graph), `GRAPH_REPORT.md` (architecture audit) and `graph.html` (interactive viewer).
 
 When the graphify-gdscript MCP server is connected, prefer its tools over the CLI: `gdscript_query_graph`, `gdscript_trace_signal`, `gdscript_shortest_path`, `gdscript_explain`, `gdscript_get_autoloads`, `gdscript_get_god_nodes`, `gdscript_token_reduction_report`, and `gdscript_rebuild_graph` after editing files.
+
+## Output format
+
+Answer in this order and keep it short:
+
+1. **Answer** - one to three sentences that respond to the question directly.
+2. **Evidence** - bullet list of `file:L<line>` citations taken from the graph output, each with the relation that supports it (for example `scripts/player.gd:L43 emits player_damaged`).
+3. **Gaps** - anything the graph did not show (dynamic `connect()` calls, string-built node paths). Say so rather than guessing.
+4. **Next step** - only if the user asked for a change: the exact files and lines to edit. Rebuild the graph afterwards.
+
+Worked examples are in `examples/`.
 
 ## Rules
 
